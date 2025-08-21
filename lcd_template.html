@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>LCD Look — Multiline + Align + Wrap</title>
+<style>
+  :root{ --bg:#0a0a0a; --panel:#171717; }
+  html,body{height:100%;margin:0;background:var(--bg);color:#eee;font:14px/1.4 system-ui, Inter, Arial}
+  .wrap{display:grid;grid-template-columns:360px 1fr;gap:16px;height:100%;padding:16px;box-sizing:border-box}
+  .panel{background:var(--panel);border:1px solid #262626;border-radius:12px;padding:14px}
+  h1{font-size:16px;margin:0 0 8px}
+  label{display:block;font-size:12px;color:#bbb;margin-top:10px}
+  textarea{width:100%;min-height:140px;resize:vertical;padding:10px;border-radius:8px;border:1px solid #333;background:#111;color:#eee;font:14px/1.5 system-ui}
+  input[type="range"]{width:100%}
+  input[type="color"]{width:100%;height:36px;border:0;border-radius:8px;background:#111}
+  .row{display:flex;gap:8px}.row>*{flex:1}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;appearance:none;background:#121212;border:1px solid #333;color:#ddd;border-radius:8px;padding:8px;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:#e8e8e8;color:#111;border-color:#e8e8e8}
+  button.primary{appearance:none;background:#e8e8e8;color:#111;border:0;border-radius:8px;padding:10px 12px;font-weight:600;cursor:pointer}
+  button:active{transform:translateY(1px)}
+  canvas{width:100%;height:100%;display:block;background:#0d0d0d;border-radius:24px}
+  .hint{color:#8a8a8a;font-size:12px;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <h1>LCD Look — Multiline + Align + Wrap</h1>
+    <label>Text (Enter for new paragraph)</label>
+    <textarea id="text">LCD LOOK
+MINIMAL VIBES FOR DAYS</textarea>
+
+    <div class="row">
+      <div>
+        <label>Font size</label>
+        <input id="fontSize" type="range" min="24" max="220" value="120">
+      </div>
+      <div>
+        <label>Tracking</label>
+        <input id="tracking" type="range" min="-80" max="160" value="30">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Line spacing</label>
+        <input id="leading" type="range" min="0.8" max="2" step="0.02" value="1.1">
+      </div>
+      <div>
+        <label>Wrap width (% of screen)</label>
+        <input id="wrapPct" type="range" min="40" max="100" value="80">
+      </div>
+    </div>
+
+    <label>Alignment</label>
+    <div class="seg" id="alignSeg">
+      <button data-align="left"   aria-pressed="false">Left</button>
+      <button data-align="center" aria-pressed="true">Center</button>
+      <button data-align="right"  aria-pressed="false">Right</button>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Chromatic offset</label>
+        <input id="chroma" type="range" min="0" max="6" step="0.1" value="2.2">
+      </div>
+      <div>
+        <label>Bloom/blur</label>
+        <input id="bloom" type="range" min="0" max="6" step="0.1" value="1.2">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Scanline intensity</label>
+        <input id="scan" type="range" min="0" max="1" step="0.02" value="0.45">
+      </div>
+      <div>
+        <label>Noisy grain</label>
+        <input id="noise" type="range" min="0" max="0.5" step="0.01" value="0.18">
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Vignette</label>
+        <input id="vignette" type="range" min="0" max="1" step="0.02" value="0.4">
+      </div>
+      <div>
+        <label>Corner radius</label>
+        <input id="radius" type="range" min="0" max="60" value="28">
+      </div>
+    </div>
+
+    <label>Foreground / Background</label>
+    <div class="row">
+      <input id="fg" type="color" value="#111111">
+      <input id="bg" type="color" value="#f0f0f0">
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <button class="primary" id="save">Export PNG</button>
+      <button id="invert">Invert</button>
+    </div>
+    <div class="hint">Auto-wrap respects tracking. Adjust Wrap Width to control column width.</div>
+  </div>
+
+  <div class="panel" style="padding:0;display:grid;overflow:hidden">
+    <canvas id="c"></canvas>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const UI = id => document.getElementById(id);
+
+function setCanvasSize(){
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const pane = document.querySelector('.panel:last-child');
+  const w = pane.clientWidth, h = pane.clientHeight;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  canvas.style.width = w + 'px';
+  canvas.style.height = h + 'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+setCanvasSize();
+addEventListener('resize', ()=>{ setCanvasSize(); draw(); });
+
+// Alignment toggle
+let align = 'center';
+document.getElementById('alignSeg').addEventListener('click', (e)=>{
+  if(e.target.matches('button')){
+    align = e.target.dataset.align;
+    [...e.currentTarget.children].forEach(b=>b.setAttribute('aria-pressed', b===e.target ? 'true' : 'false'));
+    draw();
+  }
+});
+
+['text','fontSize','tracking','leading','wrapPct','chroma','bloom','scan','noise','vignette','radius','fg','bg']
+  .forEach(id => UI(id).addEventListener('input', draw));
+
+UI('invert').onclick = () => { const fg=UI('fg').value, bg=UI('bg').value; UI('fg').value=bg; UI('bg').value=fg; draw(); };
+UI('save').onclick = () => { const a=document.createElement('a'); a.download='lcd_overlay.png'; a.href=canvas.toDataURL('image/png'); a.click(); };
+
+function roundedRectPath(x,y,w,h,r){
+  const p = new Path2D(); r=Math.min(r, w/2, h/2);
+  p.moveTo(x+r,y); p.arcTo(x+w,y,x+w,y+h,r); p.arcTo(x+w,y+h,x,y+h,r);
+  p.arcTo(x,y+h,x,y,r); p.arcTo(x,y,x+w,y,r); p.closePath(); return p;
+}
+
+// measure with tracking (px between glyphs)
+function widthWithTracking(text, trackingPx){
+  if(!text) return 0;
+  let w = 0;
+  for(const ch of text) w += ctx.measureText(ch).width + trackingPx;
+  return w - trackingPx;
+}
+
+// wrap a paragraph into lines based on wrapWidth
+function wrapParagraph(text, wrapWidth, trackingPx){
+  const words = text.split(/\s+/);
+  const lines = [];
+  let current = '';
+  const space = ' ';
+  for(const word of words){
+    const next = current ? current + space + word : word;
+    if(widthWithTracking(next, trackingPx) <= wrapWidth) {
+      current = next;
+    } else {
+      if(current) lines.push(current);
+      // very long single word: hard break by chars
+      if(widthWithTracking(word, trackingPx) > wrapWidth){
+        let buf = '';
+        for(const ch of word){
+          const tryBuf = buf + ch;
+          if(widthWithTracking(tryBuf, trackingPx) <= wrapWidth) buf = tryBuf;
+          else { lines.push(buf); buf = ch; }
+        }
+        current = buf;
+      } else {
+        current = word;
+      }
+    }
+  }
+  if(current) lines.push(current);
+  return lines;
+}
+
+// draw tracked glyphs
+function drawTracked(text, x, y, trackingPx){ let cx=x; for(const ch of text){ ctx.fillText(ch, cx, y); cx += ctx.measureText(ch).width + trackingPx; } }
+
+function draw(){
+  const W = canvas.width / (window.devicePixelRatio||1);
+  const H = canvas.height / (window.devicePixelRatio||1);
+
+  const raw = UI('text').value.replace(/\r/g,'');
+  const paragraphs = raw.split('\n'); // paragraphs before wrapping
+
+  const size = +UI('fontSize').value;
+  const trackingPx = (+UI('tracking').value/100)*size;
+  const leading = +UI('leading').value * size;
+  const wrapPct = +UI('wrapPct').value / 100;
+  const wrapWidth = (W - 64) * wrapPct; // inside screen, minus a little padding
+
+  const chroma = +UI('chroma').value;
+  const bloom = +UI('bloom').value;
+  const scan = +UI('scan').value;
+  const grain = +UI('noise').value;
+  const vignette = +UI('vignette').value;
+  const radius = +UI('radius').value;
+  const fg = UI('fg').value;
+  const bg = UI('bg').value;
+
+  ctx.save();
+  const screen = roundedRectPath(16,16,W-32,H-32,radius);
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
+  ctx.clip(screen);
+
+  // background
+  ctx.fillStyle = bg; ctx.fillRect(0,0,W,H);
+
+  // scanlines
+  const slW = 2, scanCanvas = document.createElement('canvas');
+  scanCanvas.width = slW; scanCanvas.height = 2;
+  const sctx = scanCanvas.getContext('2d');
+  sctx.fillStyle = 'rgba(0,0,0,' + (0.12*scan) + ')';
+  sctx.fillRect(1,0,1,2);
+  ctx.globalCompositeOperation='multiply';
+  ctx.fillStyle = ctx.createPattern(scanCanvas,'repeat');
+  ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='source-over';
+
+  // type setup
+  ctx.font = `600 ${size}px Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+  ctx.textBaseline = 'alphabetic';
+
+  // wrap all paragraphs
+  const wrapped = [];
+  paragraphs.forEach((p, i)=>{
+    const lines = wrapParagraph(p.trim(), wrapWidth, trackingPx);
+    wrapped.push(...lines);
+    if(i < paragraphs.length-1) wrapped.push(''); // blank line for paragraph break
+  });
+
+  // compute widths & block height
+  const widths = wrapped.map(l => l ? widthWithTracking(l, trackingPx) : 0);
+  const actualWrapWidth = Math.min(wrapWidth, Math.max(...widths, 0));
+  const blockLines = wrapped.length;
+  const blockHeight = blockLines*size + (blockLines-1)*(leading - size);
+  let top = (H - blockHeight)/2 + size;
+
+  // X origins based on alignment
+  const leftEdge = (W - actualWrapWidth)/2; // keep column centered as a column
+  function lineX(w){
+    if(align==='left')   return leftEdge;
+    if(align==='right')  return leftEdge + actualWrapWidth - w;
+    return (W - w)/2; // center each line if center chosen
+  }
+
+  // draw each line with RGB fringe + bloom + luma
+  for(let i=0;i<wrapped.length;i++){
+    const line = wrapped[i];
+    const y = top + i*leading;
+    const w = widths[i];
+    const x = lineX(w);
+
+    // blank line spacer
+    if(!line) continue;
+
+    // bloom RGB
+    ctx.save(); ctx.filter = `blur(${bloom}px)`;
+    ctx.fillStyle = `rgba(255,0,0,0.65)`;   drawTracked(line, x - chroma, y, trackingPx);
+    ctx.fillStyle = `rgba(0,255,0,0.65)`;   drawTracked(line, x,          y, trackingPx);
+    ctx.fillStyle = `rgba(0,128,255,0.65)`; drawTracked(line, x + chroma, y, trackingPx);
+    ctx.restore();
+
+    // crisp RGB
+    ctx.fillStyle = `rgba(255,0,0,0.55)`;   drawTracked(line, x - chroma*0.6, y, trackingPx);
+    ctx.fillStyle = `rgba(0,255,0,0.55)`;   drawTracked(line, x,               y, trackingPx);
+    ctx.fillStyle = `rgba(0,128,255,0.55)`; drawTracked(line, x + chroma*0.6, y, trackingPx);
+
+    // solid luma
+    ctx.fillStyle = fg; drawTracked(line, x, y, trackingPx);
+  }
+
+  // vignette
+  const grad = ctx.createRadialGradient(W/2,H/2, Math.min(W,H)*0.2, W/2,H/2, Math.max(W,H)*0.7);
+  grad.addColorStop(0,'rgba(0,0,0,0)'); grad.addColorStop(1,`rgba(0,0,0,${vignette})`);
+  ctx.fillStyle = grad; ctx.fillRect(0,0,W,H);
+
+  // grain
+  if(grain>0){
+    const nW=220,nH=220, ncan=document.createElement('canvas'); ncan.width=nW; ncan.height=nH;
+    const nctx=ncan.getContext('2d'); const id=nctx.createImageData(nW,nH);
+    for(let i=0;i<id.data.length;i+=4){ const v=128+(Math.random()*255-128)*0.5; id.data[i]=id.data[i+1]=id.data[i+2]=v; id.data[i+3]=Math.floor(255*grain); }
+    nctx.putImageData(id,0,0);
+    ctx.globalCompositeOperation='overlay';
+    ctx.fillStyle=ctx.createPattern(ncan,'repeat'); ctx.fillRect(0,0,W,H);
+    ctx.globalCompositeOperation='source-over';
+  }
+
+  // edge
+  ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1; ctx.stroke(screen);
+  ctx.restore();
+}
+draw();
+</script>
+</body>
+</html>
